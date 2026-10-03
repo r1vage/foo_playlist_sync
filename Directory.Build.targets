@@ -1,0 +1,6 @@
+<Project>
+  <!-- Applies to our project and the SDK projects under sdk/: makes WTL headers available. -->
+  <PropertyGroup>
+    <IncludePath>$(MSBuildThisFileDirectory)third_party\wtl\include;$(IncludePath)</IncludePath>
+  </PropertyGroup>
+</Project>

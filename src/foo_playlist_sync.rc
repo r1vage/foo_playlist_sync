@@ -1,0 +1,95 @@
+#include "resource.h"
+#include "version.h"
+#include <winres.h>
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+IDD_PREFERENCES DIALOGEX 0, 0, 340, 262
+STYLE DS_SETFONT | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "Destination:",IDC_STATIC,7,7,70,8
+    EDITTEXT        IDC_DEST,80,5,200,13,ES_AUTOHSCROLL
+    PUSHBUTTON      "Browse...",IDC_BROWSE,284,4,50,14
+    LTEXT           "File name pattern:",IDC_STATIC,7,23,70,8
+    EDITTEXT        IDC_PATTERN,80,21,254,13,ES_AUTOHSCROLL
+    LTEXT           "",IDC_PATTERN_PREVIEW,80,36,254,8,SS_PATHELLIPSIS | SS_NOPREFIX
+
+    GROUPBOX        "Playlists to sync",IDC_STATIC,7,47,120,106
+    CONTROL         "",IDC_PLAYLISTS,"SysListView32",LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SHOWSELALWAYS | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP,13,57,108,90
+
+    GROUPBOX        "Album art",IDC_STATIC,7,156,120,68
+    CONTROL         "Copy cover to album folders",IDC_COPY_ART,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,167,110,10
+    LTEXT           "Find:",IDC_ART_NAMES_LABEL,13,181,28,8
+    EDITTEXT        IDC_ART_NAMES,42,179,79,12,ES_AUTOHSCROLL
+    LTEXT           "Save as:",IDC_ART_DEST_LABEL,13,195,28,8
+    EDITTEXT        IDC_ART_DEST,42,193,79,12,ES_AUTOHSCROLL
+    CONTROL         "Else use embedded cover",IDC_ART_EMBEDDED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,208,110,10
+
+    CONTROL         "Save a log of each sync",IDC_SAVE_LOGS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,229,120,10
+    PUSHBUTTON      "Preview...",IDC_PREVIEW,7,244,56,14
+    PUSHBUTTON      "Sync now",IDC_SYNCNOW,67,244,60,14
+
+    GROUPBOX        "When the file already exists on the destination",IDC_STATIC,133,47,201,88
+    CONTROL         "Replace if size or date differs",IDC_POLICY_SIZEDATE,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,140,58,190,10
+    CONTROL         "Replace only if tags differ",IDC_POLICY_TAGS,"Button",BS_AUTORADIOBUTTON,140,70,190,10
+    CONTROL         "Also replace re-encoded files (codec, bitrate, length)",IDC_COMPARE_TECH,"Button",BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP,150,82,180,10
+    LTEXT           "Ignore tags:",IDC_IGNORE_TAGS_LABEL,150,95,42,8
+    EDITTEXT        IDC_IGNORE_TAGS,194,93,134,12,ES_AUTOHSCROLL
+    LTEXT           "Separate with ;  * = wildcard. ReplayGain ignored.",IDC_IGNORE_TAGS_HINT,150,107,180,8
+    CONTROL         "Never replace (same path and name = identical)",IDC_POLICY_NEVER,"Button",BS_AUTORADIOBUTTON,140,119,190,10
+
+    GROUPBOX        "Options",IDC_STATIC,133,138,201,70
+    CONTROL         "Keep original created and modified dates",IDC_PRESERVE_TIMES,"Button",BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP,140,149,190,10
+    CONTROL         "Remove files that are no longer in the playlists",IDC_REMOVE_ORPHANS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,140,161,190,10
+    CONTROL         "Only files copied by Playlist Sync (safer)",IDC_REMOVE_MANAGED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,150,173,180,10
+    LTEXT           "",IDC_REMOVE_WARNING,150,184,180,8
+    CONTROL         "Create .nomedia file in the destination folder",IDC_CREATE_NOMEDIA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,140,194,190,10
+
+    GROUPBOX        "Playlist files",IDC_STATIC,133,211,201,47
+    CONTROL         "Write .m3u8 playlist files",IDC_WRITE_PLAYLISTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,140,221,190,10
+    LTEXT           "Subfolder:",IDC_PLAYLIST_SUBDIR_LABEL,150,235,42,8
+    EDITTEXT        IDC_PLAYLIST_SUBDIR,194,233,134,12,ES_AUTOHSCROLL
+    CONTROL         "Linux-style paths (/) and line endings",IDC_UNIX_STYLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,150,246,178,10
+END
+
+IDD_REPORT DIALOGEX 0, 0, 520, 320
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX
+CAPTION "Playlist Sync report"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "",IDC_SUMMARY,7,7,506,26,SS_NOPREFIX
+    LTEXT           "Show:",IDC_FILTER_LABEL,7,39,24,8
+    COMBOBOX        IDC_FILTER,32,37,150,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,7,54,506,240
+    PUSHBUTTON      "Export...",IDC_EXPORT,7,300,60,14
+    PUSHBUTTON      "Open log folder",IDC_OPENLOG,71,300,70,14
+    PUSHBUTTON      "Sync now",IDC_RUNSYNC,405,300,54,14
+    PUSHBUTTON      "Close",IDCANCEL,463,300,50,14
+END
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION PSYNC_VERSION_MAJOR,PSYNC_VERSION_MINOR,PSYNC_VERSION_PATCH,0
+ PRODUCTVERSION PSYNC_VERSION_MAJOR,PSYNC_VERSION_MINOR,PSYNC_VERSION_PATCH,0
+ FILEFLAGSMASK 0x3fL
+ FILEOS 0x40004L
+ FILETYPE 0x2L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "Playlist Sync for foobar2000"
+            VALUE "FileVersion", PSYNC_VERSION_STRING
+            VALUE "InternalName", "foo_playlist_sync"
+            VALUE "OriginalFilename", "foo_playlist_sync.dll"
+            VALUE "ProductName", "Playlist Sync"
+            VALUE "ProductVersion", PSYNC_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

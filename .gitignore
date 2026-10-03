@@ -1,0 +1,14 @@
+build/
+dist/
+*.user
+.vs/
+
+# Build outputs inside the vendored SDK
+sdk/**/Debug/
+sdk/**/Release/
+sdk/**/x64/
+sdk/**/Win32/
+sdk/**/ARM64/
+sdk/**/ARM64EC/
+sdk/**/*.pch
+sdk/**/foobar20.*/
