@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1
+**Safety**
+- With *Remove files that are no longer in the playlists* on and *Only files copied by Playlist Sync* off, a destination folder that contains source files (for example the library's own drive or folder) is now refused instead of having those files deleted.
+- If the sync record (`.playlist_sync`) on the destination can't be read or comes from a newer version, the sync stops without changing anything instead of overwriting it.
+
+**Fixes**
+- Removing only files copied by Playlist Sync now also removes `.m3u8` files of playlists that were renamed or deselected, or all of them when playlist writing is turned off.
+- A track that lost a name collision is no longer listed in the `.m3u8` with the path of the other file.
+- Quoted text at the start of the file name pattern (e.g. `'My Music'\%artist%\...`) now keeps *remove everything* limited to that folder.
+- The build script finds Visual Studio Build Tools, not only full Visual Studio.
+
 ## 0.1.0
 First release. A modern x64/x86 replacement for the abandoned foo_ows (One Way Sync).
 

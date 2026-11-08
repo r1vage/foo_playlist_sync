@@ -311,6 +311,39 @@ static void testRemoveAllScopeAndHidden() {
 	CHECK(exists(fx.dst + L"\\.thumbnails\\.database_uuid"));
 }
 
+static void testRemoveAllRefusesSourceInsideDest() {
+	std::printf("remove everything: refuses a destination that contains the sources\n");
+	Fixture fx(L"overlap");
+	writeFile(fx.src + L"\\library\\a.mp3", "a");
+	writeFile(fx.src + L"\\library\\b.mp3", "b");
+	Options o = fx.opts();
+	o.destRoot = fx.src; // e.g. the library's own folder picked as destination
+	o.removeOrphans = true;
+	o.removeOnlyManaged = false;
+	Report r = run(o, { fx.file(L"library\\a.mp3", L"Artist\\a.mp3") });
+	CHECK(!r.fatalError.empty());
+	CHECK(exists(fx.src + L"\\library\\a.mp3"));
+	CHECK(exists(fx.src + L"\\library\\b.mp3"));
+	CHECK(!exists(fx.src + L"\\Artist"));
+}
+
+static void testUnreadableManifestChangesNothing() {
+	std::printf("unknown sync state file is not overwritten\n");
+	Fixture fx(L"badmanifest");
+	writeFile(fx.src + L"\\a.mp3", "a");
+	writeFile(fx.dst + L"\\.playlist_sync", "#playlist_sync manifest 2\nfuture\tformat\n");
+	Report r = run(fx.opts(), { fx.file(L"a.mp3", L"a.mp3") });
+	CHECK(!r.fatalError.empty());
+	CHECK(!exists(fx.dst + L"\\a.mp3"));
+	CHECK(readFile(fx.dst + L"\\.playlist_sync") == "#playlist_sync manifest 2\nfuture\tformat\n");
+
+	// An empty file is just an empty record.
+	writeFile(fx.dst + L"\\.playlist_sync", "");
+	Report r2 = run(fx.opts(), { fx.file(L"a.mp3", L"a.mp3") });
+	CHECK(r2.fatalError.empty());
+	CHECK(r2.count(Action::Added) == 1);
+}
+
 static void testSafetyEmptyList() {
 	std::printf("safety: nothing to sync never wipes destination\n");
 	Fixture fx(L"safety");
@@ -426,6 +459,29 @@ static void testPlaylists() {
 	Report r3 = run(o, { fx.file(L"a.mp3", L"Art\\a.mp3") }, { PlaylistOut{ L"Win", { { L"Art\\a.mp3", 1, L"A" } } } });
 	CHECK(exists(fx.dst + L"\\Win.m3u8"));
 	CHECK(!exists(fx.dst + L"\\Art\\b.mp3"));
+
+	// "Only files copied by Playlist Sync" also removes a playlist that was renamed or deselected.
+	o.removeOnlyManaged = true;
+	run(o, { fx.file(L"a.mp3", L"Art\\a.mp3") }, { PlaylistOut{ L"Trip", { { L"Art\\a.mp3", 1, L"A" } } } });
+	CHECK(!exists(fx.dst + L"\\Win.m3u8"));
+	CHECK(exists(fx.dst + L"\\Trip.m3u8"));
+	o.writePlaylists = false;
+	run(o, { fx.file(L"a.mp3", L"Art\\a.mp3") });
+	CHECK(!exists(fx.dst + L"\\Trip.m3u8"));
+	CHECK(exists(fx.dst + L"\\Art\\a.mp3"));
+}
+
+static void testPlaylistSkipsCollidedTrack() {
+	std::printf("playlist leaves out a track that lost a name collision\n");
+	Fixture fx(L"plcollide");
+	writeFile(fx.src + L"\\one\\t.mp3", "1");
+	writeFile(fx.src + L"\\two\\t.mp3", "2");
+	Options o = fx.opts();
+	o.writePlaylists = true;
+	PlaylistOut pl{ L"P", { { L"t.mp3", 1, L"One", fx.src + L"\\one\\t.mp3" }, { L"t.mp3", 2, L"Two", fx.src + L"\\two\\t.mp3" } } };
+	Report r = run(o, { fx.file(L"one\\t.mp3", L"t.mp3"), fx.file(L"two\\t.mp3", L"t.mp3") }, { pl });
+	CHECK(r.count(Action::Error) == 1);
+	CHECK(readFile(fx.dst + L"\\P.m3u8") == "#EXTM3U\r\n#EXTINF:1,One\r\nt.mp3\r\n");
 }
 
 static void testAbort() {
@@ -458,6 +514,15 @@ static void testHelpers() {
 	CHECK(makePlaylistFileName(L"CON") == L"_CON.m3u8");
 	CHECK(makePlaylistFileName(L"a/b") == L"a_b.m3u8");
 	CHECK(pathKey(L"a/B\\c") == pathKey(L"A\\b\\C"));
+
+	// Decides how far "remove everything" may reach.
+	CHECK(literalFolderPrefix(L"Music2\\%artist%\\%title%") == L"Music2");
+	CHECK(literalFolderPrefix(L"A\\B\\[%album%\\]%title%") == L"A\\B");
+	CHECK(literalFolderPrefix(L"My 'Music'\\%artist%\\%title%") == L"My Music");
+	CHECK(literalFolderPrefix(L"'$Special'\\%title%") == L"$Special");
+	CHECK(literalFolderPrefix(L"Rock ''n'' Roll\\%title%") == L"Rock 'n' Roll");
+	CHECK(literalFolderPrefix(L"$if2(%album artist%,Unknown)\\%title%").empty());
+	CHECK(literalFolderPrefix(L"%artist%\\Music\\%title%").empty());
 }
 
 
@@ -772,11 +837,14 @@ int wmain(int argc, wchar_t** argv) {
 	testRemoveManagedOnly();
 	testRemoveAll();
 	testRemoveAllScopeAndHidden();
+	testRemoveAllRefusesSourceInsideDest();
+	testUnreadableManifestChangesNothing();
 	testSafetyEmptyList();
 	testMissingSourceKeepsDest();
 	testDryRunChangesNothing();
 	testCollisionAndDuplicates();
 	testPlaylists();
+	testPlaylistSkipsCollidedTrack();
 	testAbort();
 	testMtpLikeDestination();
 	testNomedia();

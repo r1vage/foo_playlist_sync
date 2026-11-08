@@ -25,8 +25,6 @@ namespace psync {
 
 	namespace {
 
-		constexpr const wchar_t* kTempSuffix = L".psync-tmp";
-
 		// Set PSYNC_MTP_TRACE=1 to print the duration of each device operation to stderr (diagnostics only).
 		struct OpTimer {
 			const wchar_t* what;
@@ -156,7 +154,7 @@ namespace psync {
 			SYSTEMTIME st;
 			FILETIME local, utc;
 			if (!VariantTimeToSystemTime(date, &st) || !SystemTimeToFileTime(&st, &local) || !LocalFileTimeToFileTime(&local, &utc)) return 0;
-			return (int64_t)(((uint64_t)utc.dwHighDateTime << 32) | utc.dwLowDateTime);
+			return toInt64(utc);
 		}
 
 		bool fileTimeToVariantDate(int64_t ft, double& out) {
@@ -267,8 +265,7 @@ namespace psync {
 
 			bool copyIn(const std::wstring& src, uint64_t srcSize, const std::wstring& rel, bool replacing, const CopyTimes& times,
 				CopyProgress& progress, bool& aborted, std::wstring& err) override {
-				const std::wstring lp = src.rfind(L"\\\\", 0) == 0 ? (src.rfind(L"\\\\?\\", 0) == 0 ? src : L"\\\\?\\UNC\\" + src.substr(2)) : L"\\\\?\\" + src;
-				std::shared_ptr<void> file(CreateFileW(lp.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr),
+				std::shared_ptr<void> file(CreateFileW(longPath(src).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr),
 					[](HANDLE h) { if (h != INVALID_HANDLE_VALUE) CloseHandle(h); });
 				if (file.get() == INVALID_HANDLE_VALUE) { err = L"Couldn't open source: " + sysErrorText(GetLastError()); return false; }
 				ReaderFactory factory = [file]() -> Reader {
@@ -560,7 +557,7 @@ namespace psync {
 				auto record = [&](const std::wstring& id) {
 					Child c; c.name = name; c.id = id; c.size = size;
 					FILETIME now; GetSystemTimeAsFileTime(&now);
-					c.mtime = (int64_t)(((uint64_t)now.dwHighDateTime << 32) | now.dwLowDateTime);
+					c.mtime = toInt64(now);
 					parent->children[key] = c;
 				};
 

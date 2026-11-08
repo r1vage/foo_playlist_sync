@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+struct _FILETIME; // <windows.h>
+
 namespace psync {
 
 	struct DestStat {
@@ -89,6 +91,9 @@ namespace psync {
 	std::vector<MtpStorageInfo> listMtpStorages(bool includeMassStorage = false);
 
 	// Shared helpers.
+	constexpr const wchar_t* kTempSuffix = L".psync-tmp"; // files being written; renamed when complete
 	std::wstring sysErrorText(unsigned long code);
 	std::wstring parentRel(const std::wstring& rel);
+	std::wstring longPath(const std::wstring& path); // \\?\ form, lifts the 260 character limit
+	int64_t toInt64(const _FILETIME& ft);
 }

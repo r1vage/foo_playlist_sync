@@ -43,6 +43,7 @@ namespace psync {
 		std::wstring destRel;
 		int durationSec = -1;
 		std::wstring displayTitle;  // "Artist - Title" for #EXTINF
+		std::wstring sourcePath;    // to leave out tracks that lost a name collision; empty: not checked
 	};
 
 	struct PlaylistOut {
@@ -106,4 +107,7 @@ namespace psync {
 	std::wstring pathKey(const std::wstring& path); // case-insensitive comparison key
 	uint64_t fnv1a(const void* data, size_t len, uint64_t seed = 14695981039346656037ull);
 	bool wildcardMatchNoCase(const wchar_t* pattern, const wchar_t* text);
+	// Fixed folders at the start of a file name pattern, e.g. "Music2" for "Music2\%artist%\...". Removal of
+	// unknown files is limited to that folder so other content of the destination is never touched.
+	std::wstring literalFolderPrefix(const std::wstring& pattern);
 }

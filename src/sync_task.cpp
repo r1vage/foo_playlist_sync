@@ -332,15 +332,6 @@ namespace psync {
 
 	bool isSyncRunning() { return g_running; }
 
-	// Fixed folders at the start of the pattern, e.g. "Music2" for "Music2\%artist%\...". Removal of unknown
-	// files is limited to that folder so other content of the destination is never touched.
-	static std::wstring literalFolderPrefix(const char* pattern) {
-		std::string literal;
-		for (const char* p = pattern; *p && !strchr("%$['", *p); ++p) literal += *p;
-		const size_t pos = literal.find_last_of("\\/");
-		return pos == std::string::npos ? std::wstring() : wide(literal.substr(0, pos).c_str());
-	}
-
 	// Applies the file name pattern. The pattern may include the extension itself (e.g. ".$ext(%_path%)");
 	// otherwise the source file's extension is appended.
 	static void formatDestPath(const metadb_handle_ptr& h, const titleformat_object::ptr& script, const char* ext, pfc::string8& out) {
@@ -406,7 +397,7 @@ namespace psync {
 
 		titleformat_object::ptr script, titleScript;
 		const pfc::string8 pattern = cfg::getPattern();
-		opt.removalScope = literalFolderPrefix(pattern);
+		opt.removalScope = literalFolderPrefix(wide(pattern));
 		if (!titleformat_compiler::get()->compile(script, pattern)) {
 			popup_message::g_show("The file name pattern is not valid title formatting.", "Playlist Sync");
 			return;
@@ -428,7 +419,8 @@ namespace psync {
 		std::vector<PlaylistOut> playlists;
 
 		// One entry per distinct track; the first track of a physical file decides its destination name.
-		std::map<metadb_handle*, std::wstring> destByHandle;
+		struct KnownTrack { std::wstring destRel, sourcePath; };
+		std::map<metadb_handle*, KnownTrack> destByHandle;
 		std::unordered_map<std::wstring, std::wstring> destBySource;
 
 		auto pm = playlist_manager_v5::get();
@@ -448,10 +440,11 @@ namespace psync {
 			plOut.name = wide(name);
 			for (t_size i = 0; i < items.get_count(); ++i) {
 				const metadb_handle_ptr& h = items[i];
-				std::wstring destRel;
+				std::wstring destRel, sourcePath;
 				auto known = destByHandle.find(h.get_ptr());
 				if (known != destByHandle.end()) {
-					destRel = known->second;
+					destRel = known->second.destRel;
+					sourcePath = known->second.sourcePath;
 				} else {
 					SourceFile sf;
 					pfc::string8 native;
@@ -487,12 +480,14 @@ namespace psync {
 						dir = dir.substr(0, dir.find_last_of(L'\\') == std::wstring::npos ? 0 : dir.find_last_of(L'\\'));
 						if (!dir.empty() && artDirs.insert(pathKey(dir)).second) artJobs.push_back(ArtJob{ dir, sf.sourcePath });
 					}
+					sourcePath = sf.sourcePath;
 					if (!sf.error.empty() || !sf.destRel.empty()) files.push_back(std::move(sf));
-					destByHandle[h.get_ptr()] = destRel;
+					destByHandle[h.get_ptr()] = KnownTrack{ destRel, sourcePath };
 				}
 				if (opt.writePlaylists && !destRel.empty()) {
 					PlaylistTrack t;
 					t.destRel = destRel;
+					t.sourcePath = sourcePath;
 					metadb_info_container::ptr info;
 					t.durationSec = h->get_info_ref(info) ? (int)(info->info().get_length() + 0.5) : -1;
 					pfc::string8 title;

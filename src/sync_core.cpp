@@ -1,5 +1,6 @@
 #include "sync_core.h"
 #include "dest_fs.h"
+#include "report_format.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -16,7 +17,6 @@ namespace psync {
 
 		constexpr int64_t kTicksPerSecond = 10'000'000;      // FILETIME units
 		constexpr int64_t kDateTolerance = 2 * kTicksPerSecond; // FAT stores times with 2 s resolution
-		constexpr const wchar_t* kTempSuffix = L".psync-tmp";
 		constexpr const wchar_t* kManifestHeader = L"#playlist_sync manifest 1";
 
 		struct ManifestEntry {
@@ -36,16 +36,10 @@ namespace psync {
 			int64_t ctime = 0;
 		};
 
-		int64_t toInt64(const FILETIME& ft) {
-			return (int64_t)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime);
-		}
-
 		SrcStat statSource(const std::wstring& path) {
 			SrcStat st;
-			std::wstring lp = path.rfind(L"\\\\?\\", 0) == 0 ? path
-				: path.rfind(L"\\\\", 0) == 0 ? L"\\\\?\\UNC\\" + path.substr(2) : L"\\\\?\\" + path;
 			WIN32_FILE_ATTRIBUTE_DATA d;
-			if (GetFileAttributesExW(lp.c_str(), GetFileExInfoStandard, &d)) {
+			if (GetFileAttributesExW(longPath(path).c_str(), GetFileExInfoStandard, &d)) {
 				st.exists = true;
 				st.isDir = (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 				st.size = ((uint64_t)d.nFileSizeHigh << 32) | d.nFileSizeLow;
@@ -76,10 +70,11 @@ namespace psync {
 			return buf;
 		}
 
-		Manifest loadManifest(DestFs& fs) {
-			Manifest m;
+		// False when the state file exists but can't be read or has an unknown format; overwriting it would
+		// forget every file an earlier sync copied.
+		bool loadManifest(DestFs& fs, Manifest& m) {
 			std::string raw;
-			if (!fs.readFile(kManifestName, raw)) return m;
+			if (!fs.readFile(kManifestName, raw)) return !fs.stat(kManifestName).exists;
 			std::wstring text = fromUtf8(raw);
 			size_t pos = 0;
 			bool first = true;
@@ -91,7 +86,7 @@ namespace psync {
 				if (!line.empty() && line.back() == L'\r') line.pop_back();
 				if (first) {
 					first = false;
-					if (line != kManifestHeader) return {}; // unknown format: ignore rather than misinterpret
+					if (line != kManifestHeader) return false;
 					continue;
 				}
 				if (line.empty() || line[0] == L'#') continue;
@@ -112,7 +107,7 @@ namespace psync {
 				e.techHash = _wcstoui64(f[4].c_str(), nullptr, 16);
 				m[pathKey(e.destRel)] = std::move(e);
 			}
-			return m;
+			return true;
 		}
 
 		bool saveManifest(DestFs& fs, const Manifest& m, std::wstring& err) {
@@ -166,15 +161,6 @@ namespace psync {
 				s = t + 1;
 			}
 			return out;
-		}
-
-		std::wstring formatBytes(uint64_t b) {
-			wchar_t buf[64];
-			if (b >= (1ull << 30)) swprintf_s(buf, L"%.2f GB", b / double(1ull << 30));
-			else if (b >= (1ull << 20)) swprintf_s(buf, L"%.1f MB", b / double(1ull << 20));
-			else if (b >= 1024) swprintf_s(buf, L"%.0f KB", b / 1024.0);
-			else swprintf_s(buf, L"%llu bytes", (unsigned long long)b);
-			return buf;
 		}
 
 		bool datesMatch(int64_t a, int64_t b) {
@@ -263,6 +249,24 @@ namespace psync {
 		return *pat == 0;
 	}
 
+	std::wstring literalFolderPrefix(const std::wstring& pattern) {
+		std::wstring literal;
+		bool quoted = false;
+		for (size_t i = 0; i < pattern.size(); ++i) {
+			const wchar_t c = pattern[i];
+			if (c == L'\'') {
+				// Title formatting: 'text' is literal, '' is an apostrophe.
+				if (i + 1 < pattern.size() && pattern[i + 1] == L'\'') { literal += c; ++i; }
+				else quoted = !quoted;
+				continue;
+			}
+			if (!quoted && (c == L'%' || c == L'$' || c == L'[')) break;
+			literal += c;
+		}
+		const size_t pos = literal.find_last_of(L"\\/");
+		return pos == std::wstring::npos ? std::wstring() : literal.substr(0, pos);
+	}
+
 	std::wstring makePlaylistFileName(const std::wstring& playlistName) {
 		return sanitizeComponent(playlistName) + L".m3u8";
 	}
@@ -313,7 +317,12 @@ namespace psync {
 		const bool reliableDates = fs.hasReliableDates();
 		const std::wstring playlistSubdir = sanitizeRel(opt.playlistSubdir);
 
-		const Manifest oldManifest = rootMissing ? Manifest{} : loadManifest(fs);
+		Manifest oldManifest;
+		if (!rootMissing && !loadManifest(fs, oldManifest)) {
+			rep.fatalError = std::wstring(L"Couldn't read the sync state file (") + kManifestName + L") on the destination, so nothing "
+				L"was changed. If the file is damaged or from a newer version, delete it and sync again.";
+			return finish();
+		}
 		Manifest newManifest;
 
 		// ---- Phase 1: compare ----
@@ -387,7 +396,7 @@ namespace psync {
 			auto decideBySizeDate = [&](bool useManifest) {
 				if (src.size != dst.size) {
 					replace = true;
-					reason = L"Size differs (source " + formatBytes(src.size) + L", destination " + formatBytes(dst.size) + L")";
+					reason = L"Size differs (source " + formatBytesShort(src.size) + L", destination " + formatBytesShort(dst.size) + L")";
 				} else if (useManifest && old) {
 					if (old->srcMtime != src.mtime || old->srcSize != src.size) { replace = true; reason = L"Source modified since last sync"; }
 					else reason = L"Unchanged since last sync";
@@ -468,6 +477,17 @@ namespace psync {
 					if (st.exists && !st.isDir) removals.push_back(Removal{ kv.second.destRel, st.size });
 				}
 			} else {
+				// A destination that contains the sources (e.g. the library's drive) would delete the library.
+				std::wstring rootPath;
+				if (fs.localPath(L"", rootPath)) {
+					const std::wstring rootKey = pathKey(rootPath) + L"\\";
+					for (auto& f : files) {
+						if (f.sourcePath.empty() || pathKey(f.sourcePath).rfind(rootKey, 0) != 0) continue;
+						rep.fatalError = L"The destination folder contains source files (" + f.sourcePath + L"). \"Remove files\" with "
+							L"\"Only files copied by Playlist Sync\" off would delete them, so nothing was changed.";
+						return finish();
+					}
+				}
 				// Only inside the scope folder, and never hidden (dot) files or folders: on phones those belong
 				// to the system or other apps (.thumbnails, .nomedia, ...).
 				const std::wstring scope = sanitizeRel(opt.removalScope);
@@ -490,8 +510,8 @@ namespace psync {
 			for (auto& r : removals) needed -= (int64_t)r.size;
 			uint64_t freeBytes = 0;
 			if (needed > 0 && fs.freeSpace(freeBytes) && (uint64_t)needed > freeBytes) {
-				std::wstring msg = L"Not enough free space on the destination: " + formatBytes((uint64_t)needed) +
-					L" needed, " + formatBytes(freeBytes) + L" available.";
+				std::wstring msg = L"Not enough free space on the destination: " + formatBytesShort((uint64_t)needed) +
+					L" needed, " + formatBytesShort(freeBytes) + L" available.";
 				if (!opt.dryRun) { rep.fatalError = msg + L" Nothing was changed."; return finish(); }
 				add(Action::Error, L"", L"", 0, msg);
 			}
@@ -590,7 +610,11 @@ namespace psync {
 				size_t n = 0;
 				for (auto& t : pl.tracks) {
 					std::wstring tr = sanitizeRel(t.destRel);
-					if (tr.empty() || !presentAfterSync.count(pathKey(tr))) continue;
+					const std::wstring trKey = pathKey(tr);
+					if (tr.empty() || !presentAfterSync.count(trKey)) continue;
+					// A track that lost a name collision would point at the other file's copy.
+					const auto owner = destOwner.find(trKey);
+					if (!t.sourcePath.empty() && owner != destOwner.end() && pathKey(files[owner->second].sourcePath) != pathKey(t.sourcePath)) continue;
 					text += L"#EXTINF:" + std::to_wstring(t.durationSec) + L"," + t.displayTitle + nl;
 					text += playlistRelPath(playlistSubdir, tr, opt.playlistUnixStyle) + nl;
 					++n;
@@ -599,11 +623,18 @@ namespace psync {
 				std::string existing;
 				const bool same = !rootMissing && fs.readFile(rel, existing) && existing == data;
 				std::wstring info = std::to_wstring(n) + (n == 1 ? L" track" : L" tracks");
-				if (same) { add(Action::Playlist, rel, pl.name, data.size(), L"Unchanged, " + info); continue; }
+				// Recorded in the sync state so "remove only files copied by Playlist Sync" also removes playlists
+				// that were renamed or deselected later.
+				const ManifestEntry plEntry{ rel };
+				if (same) { add(Action::Playlist, rel, pl.name, data.size(), L"Unchanged, " + info); newManifest[pathKey(rel)] = plEntry; continue; }
 				if (opt.dryRun) { add(Action::Playlist, rel, pl.name, data.size(), L"Would write, " + info); continue; }
 				std::wstring err;
-				if (fs.writeFile(rel, data, false, err)) add(Action::Playlist, rel, pl.name, data.size(), L"Written, " + info);
-				else add(Action::Error, rel, pl.name, 0, L"Couldn't write playlist: " + err);
+				if (fs.writeFile(rel, data, false, err)) {
+					add(Action::Playlist, rel, pl.name, data.size(), L"Written, " + info);
+					newManifest[pathKey(rel)] = plEntry;
+				} else {
+					add(Action::Error, rel, pl.name, 0, L"Couldn't write playlist: " + err);
+				}
 			}
 		}
 		if (!rep.aborted && opt.createNomedia && (rootMissing || !fs.stat(kNomediaName).exists)) {
