@@ -13,6 +13,21 @@
 
 namespace psync {
 
+	std::wstring logFolder() {
+		pfc::string8 dir = filesystem::g_get_native_path(core_api::pathInProfile("playlist_sync_logs"));
+		return std::wstring(pfc::stringcvt::string_wide_from_utf8(dir).get_ptr());
+	}
+
+	bool writeUtf8File(const std::wstring& path, const std::wstring& text) {
+		pfc::stringcvt::string_utf8_from_wide u(text.c_str());
+		HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (h == INVALID_HANDLE_VALUE) return false;
+		DWORD w = 0;
+		bool ok = WriteFile(h, "\xEF\xBB\xBF", 3, &w, nullptr) && WriteFile(h, u.get_ptr(), (DWORD)u.length(), &w, nullptr);
+		CloseHandle(h);
+		return ok;
+	}
+
 	namespace {
 
 		enum Column { colAction, colFile, colSize, colReason, colSource, colCount };
@@ -31,21 +46,6 @@ namespace psync {
 			case fPlaylists: return a == Action::Playlist;
 			default: return true;
 			}
-		}
-
-		std::wstring logFolder() {
-			pfc::string8 dir = filesystem::g_get_native_path(core_api::pathInProfile("playlist_sync_logs"));
-			return std::wstring(pfc::stringcvt::string_wide_from_utf8(dir).get_ptr());
-		}
-
-		bool writeUtf8File(const std::wstring& path, const std::wstring& text) {
-			pfc::stringcvt::string_utf8_from_wide u(text.c_str());
-			HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-			if (h == INVALID_HANDLE_VALUE) return false;
-			DWORD w = 0;
-			bool ok = WriteFile(h, "\xEF\xBB\xBF", 3, &w, nullptr) && WriteFile(h, u.get_ptr(), (DWORD)u.length(), &w, nullptr);
-			CloseHandle(h);
-			return ok;
 		}
 
 		class CReportDialog : public CDialogImpl<CReportDialog> {

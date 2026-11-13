@@ -18,6 +18,7 @@ namespace psync {
 		constexpr int64_t kTicksPerSecond = 10'000'000;      // FILETIME units
 		constexpr int64_t kDateTolerance = 2 * kTicksPerSecond; // FAT stores times with 2 s resolution
 		constexpr const wchar_t* kManifestHeader = L"#playlist_sync manifest 1";
+		constexpr const wchar_t* kTagSchemeKey = L"#tagscheme\t"; // a comment line to older versions
 
 		struct ManifestEntry {
 			std::wstring destRel;
@@ -72,7 +73,7 @@ namespace psync {
 
 		// False when the state file exists but can't be read or has an unknown format; overwriting it would
 		// forget every file an earlier sync copied.
-		bool loadManifest(DestFs& fs, Manifest& m) {
+		bool loadManifest(DestFs& fs, Manifest& m, uint64_t& tagScheme) {
 			std::string raw;
 			if (!fs.readFile(kManifestName, raw)) return !fs.stat(kManifestName).exists;
 			std::wstring text = fromUtf8(raw);
@@ -89,6 +90,7 @@ namespace psync {
 					if (line != kManifestHeader) return false;
 					continue;
 				}
+				if (line.rfind(kTagSchemeKey, 0) == 0) { tagScheme = _wcstoui64(line.c_str() + wcslen(kTagSchemeKey), nullptr, 16); continue; }
 				if (line.empty() || line[0] == L'#') continue;
 				std::vector<std::wstring> f;
 				size_t s = 0;
@@ -110,12 +112,13 @@ namespace psync {
 			return true;
 		}
 
-		bool saveManifest(DestFs& fs, const Manifest& m, std::wstring& err) {
+		bool saveManifest(DestFs& fs, const Manifest& m, uint64_t tagScheme, std::wstring& err) {
 			std::vector<const ManifestEntry*> sorted;
 			sorted.reserve(m.size());
 			for (auto& kv : m) sorted.push_back(&kv.second);
 			std::sort(sorted.begin(), sorted.end(), [](auto a, auto b) { return a->destRel < b->destRel; });
 			std::wstring text = kManifestHeader;
+			text += L"\n" + (kTagSchemeKey + hex64(tagScheme));
 			text += L"\n# destination\tsource size\tsource mtime\ttag hash\ttech hash\n";
 			for (auto e : sorted) {
 				text += e->destRel + L"\t" + std::to_wstring(e->srcSize) + L"\t" + std::to_wstring(e->srcMtime) + L"\t" +
@@ -140,7 +143,9 @@ namespace psync {
 			}
 			while (!c.empty() && (c.back() == L'.' || c.back() == L' ')) c.pop_back();
 			while (!c.empty() && c.front() == L' ') c.erase(c.begin());
-			if (c.empty() || c == L"." || c == L"..") c = L"_";
+			if (c.empty()) c = L"_";
+			// A leading dot hides the folder from Android media scanners and from "remove everything" (e.g. ".38 Special").
+			if (c.front() == L'.') c.front() = L'_';
 			if (isReservedDeviceName(c)) c = L"_" + c;
 			return c;
 		}
@@ -235,6 +240,18 @@ namespace psync {
 		return h;
 	}
 
+	uint64_t hashFields(std::vector<std::pair<std::string, std::string>> fields) {
+		std::sort(fields.begin(), fields.end());
+		uint64_t h = fnv1a("", 0);
+		for (auto& f : fields) {
+			h = fnv1a(f.first.data(), f.first.size(), h);
+			h = fnv1a("\x1e", 1, h);
+			h = fnv1a(f.second.data(), f.second.size(), h);
+			h = fnv1a("\x1d", 1, h);
+		}
+		return h;
+	}
+
 	bool wildcardMatchNoCase(const wchar_t* pat, const wchar_t* txt) {
 		// Iterative '*' / '?' matcher with backtracking to the last star.
 		const wchar_t* star = nullptr;
@@ -318,11 +335,14 @@ namespace psync {
 		const std::wstring playlistSubdir = sanitizeRel(opt.playlistSubdir);
 
 		Manifest oldManifest;
-		if (!rootMissing && !loadManifest(fs, oldManifest)) {
+		uint64_t oldTagScheme = 0;
+		if (!rootMissing && !loadManifest(fs, oldManifest, oldTagScheme)) {
 			rep.fatalError = std::wstring(L"Couldn't read the sync state file (") + kManifestName + L") on the destination, so nothing "
 				L"was changed. If the file is damaged or from a newer version, delete it and sync again.";
 			return finish();
 		}
+		// Tag hashes made with another ignore list can't be compared with today's; 0 means unknown.
+		if (oldTagScheme != opt.tagScheme) for (auto& kv : oldManifest) kv.second.tagHash = 0;
 		Manifest newManifest;
 
 		// ---- Phase 1: compare ----
@@ -398,7 +418,7 @@ namespace psync {
 					replace = true;
 					reason = L"Size differs (source " + formatBytesShort(src.size) + L", destination " + formatBytesShort(dst.size) + L")";
 				} else if (useManifest && old) {
-					if (old->srcMtime != src.mtime || old->srcSize != src.size) { replace = true; reason = L"Source modified since last sync"; }
+					if (!datesMatch(old->srcMtime, src.mtime) || old->srcSize != src.size) { replace = true; reason = L"Source modified since last sync"; }
 					else reason = L"Unchanged since last sync";
 				} else if (!reliableDates) {
 					reason = L"Same size (no earlier sync record; the device's dates can't be compared)";
@@ -421,7 +441,7 @@ namespace psync {
 				bool have = false;
 				const wchar_t* via = L"";
 				std::wstring local;
-				if (old && (old->tagHash || old->techHash)) {
+				if (old && old->tagHash) {
 					dTag = old->tagHash; dTech = old->techHash; have = true;
 				} else if (readDestTags && fs.localPath(f.destRel, local) && readDestTags(local, dTag, dTech)) {
 					have = true; via = L" (read from destination)";
@@ -430,6 +450,7 @@ namespace psync {
 				if (!have) {
 					decideBySizeDate(false);
 					reason = L"Couldn't read destination tags; " + reason;
+					keep.tagHash = f.tagHash; keep.techHash = f.techHash; // counted as identical, so later runs compare tags
 				} else if (dTag != f.tagHash) {
 					replace = true; reason = std::wstring(L"Tags changed") + via;
 				} else if (opt.compareTech && dTech != f.techHash) {
@@ -461,6 +482,13 @@ namespace psync {
 			}
 		}
 
+		std::vector<std::wstring> keepKeys;
+		for (auto& s : opt.keepStems) keepKeys.push_back(pathKey(sanitizeRel(s)) + L".");
+		auto kept = [&](const std::wstring& key) {
+			return desired.count(key) || ownFiles.count(key) ||
+				std::any_of(keepKeys.begin(), keepKeys.end(), [&](const std::wstring& k) { return key.rfind(k, 0) == 0; });
+		};
+
 		// ---- Phase 2: find orphans ----
 		struct Removal { std::wstring rel; uint64_t size; };
 		std::vector<Removal> removals;
@@ -469,25 +497,26 @@ namespace psync {
 				rep.fatalError = L"None of the selected playlists' files could be synced, so nothing was removed (safety check).";
 				return finish();
 			}
+			// A destination that contains the sources (e.g. the library's own folder) would delete the library. Files
+			// found in place are adopted into the sync state, so this applies to both removal modes.
+			std::wstring rootPath;
+			if (fs.localPath(L"", rootPath)) {
+				const std::wstring rootKey = pathKey(rootPath) + L"\\";
+				for (auto& f : files) {
+					if (f.sourcePath.empty() || pathKey(f.sourcePath).rfind(rootKey, 0) != 0) continue;
+					rep.fatalError = L"The destination folder contains source files (" + f.sourcePath + L"). \"Remove files that are "
+						L"no longer in the playlists\" could delete them, so nothing was changed.";
+					return finish();
+				}
+			}
 			progress.setPhase(L"Looking for files to remove");
 			if (opt.removeOnlyManaged) {
 				for (auto& kv : oldManifest) {
-					if (desired.count(kv.first) || ownFiles.count(kv.first)) continue;
+					if (kept(kv.first)) continue;
 					DestStat st = fs.stat(kv.second.destRel);
 					if (st.exists && !st.isDir) removals.push_back(Removal{ kv.second.destRel, st.size });
 				}
 			} else {
-				// A destination that contains the sources (e.g. the library's drive) would delete the library.
-				std::wstring rootPath;
-				if (fs.localPath(L"", rootPath)) {
-					const std::wstring rootKey = pathKey(rootPath) + L"\\";
-					for (auto& f : files) {
-						if (f.sourcePath.empty() || pathKey(f.sourcePath).rfind(rootKey, 0) != 0) continue;
-						rep.fatalError = L"The destination folder contains source files (" + f.sourcePath + L"). \"Remove files\" with "
-							L"\"Only files copied by Playlist Sync\" off would delete them, so nothing was changed.";
-						return finish();
-					}
-				}
 				// Only inside the scope folder, and never hidden (dot) files or folders: on phones those belong
 				// to the system or other apps (.thumbnails, .nomedia, ...).
 				const std::wstring scope = sanitizeRel(opt.removalScope);
@@ -496,7 +525,7 @@ namespace psync {
 					const std::wstring key = pathKey(rel);
 					if (!scopeKey.empty() && key.rfind(scopeKey, 0) != 0) return !checkAbort();
 					const bool hidden = rel[0] == L'.' || rel.find(L"\\.") != std::wstring::npos;
-					if (!hidden && !desired.count(key) && !ownFiles.count(key)) removals.push_back(Removal{ rel, size });
+					if (!hidden && !kept(key)) removals.push_back(Removal{ rel, size });
 					return !checkAbort();
 				});
 			}
@@ -601,10 +630,15 @@ namespace psync {
 			progress.setPhase(L"Writing playlists");
 			std::wstring dirErr;
 			const bool dirOk = opt.dryRun || fs.ensureDir(playlistSubdir, dirErr);
+			std::unordered_set<std::wstring> usedNames;
 			for (auto& pl : playlists) {
 				const std::wstring fileName = makePlaylistFileName(pl.name);
 				const std::wstring rel = playlistSubdir.empty() ? fileName : playlistSubdir + L"\\" + fileName;
 				if (!dirOk) { add(Action::Error, rel, L"", 0, L"Couldn't create playlist folder: " + dirErr); continue; }
+				if (!usedNames.insert(pathKey(rel)).second) {
+					add(Action::Error, rel, pl.name, 0, L"Another selected playlist already uses this file name");
+					continue;
+				}
 				const wchar_t* nl = opt.playlistUnixStyle ? L"\n" : L"\r\n";
 				std::wstring text = std::wstring(L"#EXTM3U") + nl;
 				size_t n = 0;
@@ -655,7 +689,7 @@ namespace psync {
 				if (fs.stat(kv.second.destRel).exists) newManifest[kv.first] = kv.second;
 			}
 			std::wstring err;
-			if (!saveManifest(fs, newManifest, err)) {
+			if (!saveManifest(fs, newManifest, opt.tagScheme, err)) {
 				add(Action::Error, kManifestName, L"", 0, L"Couldn't save sync state file: " + err);
 			}
 		}

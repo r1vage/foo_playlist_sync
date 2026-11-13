@@ -143,12 +143,13 @@ namespace psync {
 
 			void fillPlaylists() {
 				auto selected = cfg::getSelectedPlaylists();
+				auto pm = playlist_manager_v5::get();
+				// Same lookup as startSync: by GUID, else by name when that GUID is gone (playlist deleted and re-created).
 				auto isSelected = [&](const GUID& g, const char* name, bool& matchedByName) {
 					for (auto& s : selected) if (s.guid == g) return true;
-					for (auto& s : selected) if (s.guid == pfc::guid_null && s.name == name) { matchedByName = true; return true; }
+					for (auto& s : selected) if (pm->find_playlist_by_guid(s.guid) == SIZE_MAX && s.name == name) { matchedByName = true; return true; }
 					return false;
 				};
-				auto pm = playlist_manager_v5::get();
 				std::vector<bool> used(selected.size(), false);
 				const size_t count = pm->get_playlist_count();
 				for (size_t i = 0; i < count; ++i) {

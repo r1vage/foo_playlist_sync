@@ -36,11 +36,6 @@ namespace psync {
 			}
 		};
 
-		void trace(const wchar_t* what, HRESULT hr) {
-			static const bool on = GetEnvironmentVariableW(L"PSYNC_MTP_TRACE", nullptr, 0) > 0;
-			if (on) fwprintf(stderr, L"[mtp] %s 0x%08lX\n", what, (unsigned long)hr);
-		}
-
 		std::wstring hrText(HRESULT hr) { return sysErrorText((unsigned long)hr); }
 
 		template<typename T> ComPtr<T> create(REFCLSID clsid) {
@@ -158,9 +153,8 @@ namespace psync {
 		}
 
 		bool fileTimeToVariantDate(int64_t ft, double& out) {
-			FILETIME utc, local;
-			utc.dwLowDateTime = (DWORD)((uint64_t)ft & 0xFFFFFFFF);
-			utc.dwHighDateTime = (DWORD)((uint64_t)ft >> 32);
+			const FILETIME utc = toFileTime(ft);
+			FILETIME local;
 			SYSTEMTIME st;
 			return FileTimeToLocalFileTime(&utc, &local) && FileTimeToSystemTime(&local, &st) && SystemTimeToVariantTime(&st, &out);
 		}
@@ -379,6 +373,8 @@ namespace psync {
 				keys->Add(WPD_OBJECT_CONTENT_TYPE);
 				keys->Add(WPD_OBJECT_SIZE);
 				keys->Add(WPD_OBJECT_DATE_MODIFIED);
+				// One request per file. Measured on a phone (3,800 files in 1,500 folders): about 1 s in total, and the
+				// bulk properties interface was no faster. A phone's very first listing of a folder is slow either way.
 				OpTimer timer(L"list");
 				for (auto& id : childIds(m_content.Get(), parentId)) {
 					ComPtr<IPortableDeviceValues> v;

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "sync_task.h"
 #include "config.h"
+#include "dest_fs.h"
 #include "report_dialog.h"
 #include "report_format.h"
 
@@ -54,15 +55,7 @@ namespace psync {
 				}
 				fields.emplace_back(std::move(key), std::move(val));
 			}
-			std::sort(fields.begin(), fields.end());
-			uint64_t h = fnv1a("", 0);
-			for (auto& f : fields) {
-				h = fnv1a(f.first.data(), f.first.size(), h);
-				h = fnv1a("\x1e", 1, h);
-				h = fnv1a(f.second.data(), f.second.size(), h);
-				h = fnv1a("\x1d", 1, h);
-			}
-			return h;
+			return hashFields(std::move(fields));
 		}
 
 		uint64_t hashTech(const file_info& info) {
@@ -95,17 +88,10 @@ namespace psync {
 
 		void saveLog(const Report& r) {
 			try {
-				pfc::string8 dir = filesystem::g_get_native_path(core_api::pathInProfile("playlist_sync_logs"));
-				std::wstring wdir = wide(dir);
+				const std::wstring wdir = logFolder();
 				CreateDirectoryW(wdir.c_str(), nullptr);
 				std::wstring name = formatTimestamp(r.startedAt, true) + (r.dryRun ? L"_preview.txt" : L".txt");
-				pfc::string8 text = utf8(reportAsText(r));
-				HANDLE h = CreateFileW((wdir + L"\\" + name).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-				if (h == INVALID_HANDLE_VALUE) return;
-				DWORD w = 0;
-				WriteFile(h, "\xEF\xBB\xBF", 3, &w, nullptr);
-				WriteFile(h, text.get_ptr(), (DWORD)text.length(), &w, nullptr);
-				CloseHandle(h);
+				if (!writeUtf8File(wdir + L"\\" + name, reportAsText(r))) return;
 
 				// Keep the newest 100 logs.
 				std::vector<std::wstring> logs;
@@ -146,7 +132,7 @@ namespace psync {
 		}
 
 		bool readBytes(const std::wstring& path, std::string& out) {
-			HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+			HANDLE h = CreateFileW(longPath(path).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
 			if (h == INVALID_HANDLE_VALUE) return false;
 			LARGE_INTEGER sz;
 			bool ok = GetFileSizeEx(h, &sz) && sz.QuadPart < (100ll << 20);
@@ -208,7 +194,7 @@ namespace psync {
 				if (cached != m_folderCache.end()) return cached->second;
 				std::unordered_map<std::wstring, std::wstring> files; // lower-case name -> actual name
 				WIN32_FIND_DATAW fd;
-				HANDLE h = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, 0);
+				HANDLE h = FindFirstFileExW(longPath(dir + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, 0);
 				if (h != INVALID_HANDLE_VALUE) {
 					do if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) files[lower(fd.cFileName)] = fd.cFileName;
 					while (FindNextFileW(h, &fd));
@@ -246,7 +232,7 @@ namespace psync {
 				const bool ok = WriteFile(h, bytes.data(), (DWORD)bytes.size(), &w, nullptr) && w == bytes.size();
 				// Give the temp file the track's date so "size or date" comparisons stay stable between runs.
 				WIN32_FILE_ATTRIBUTE_DATA d;
-				if (ok && GetFileAttributesExW(audioPath.c_str(), GetFileExInfoStandard, &d)) SetFileTime(h, &d.ftLastWriteTime, nullptr, &d.ftLastWriteTime);
+				if (ok && GetFileAttributesExW(longPath(audioPath).c_str(), GetFileExInfoStandard, &d)) SetFileTime(h, &d.ftLastWriteTime, nullptr, &d.ftLastWriteTime);
 				CloseHandle(h);
 				if (!ok) { DeleteFileW(path.c_str()); return L""; }
 				m_tempFiles.push_back(path);
@@ -301,6 +287,9 @@ namespace psync {
 							progress.setItem(m_artJobs[i].destDir);
 							SourceFile sf;
 							if (art.resolve(m_artJobs[i], abort, sf)) m_files.push_back(std::move(sf));
+							// Source drive missing: the cover can't be looked up, which must not remove its copy.
+							else if (GetFileAttributesW(longPath(m_artJobs[i].audioPath).c_str()) == INVALID_FILE_ATTRIBUTES)
+								m_opt.keepStems.push_back(m_artJobs[i].destDir + L"\\" + m_art.destName);
 						}
 					}
 					m_report = runSync(m_opt, std::move(m_files), m_playlists, progress, reader);
@@ -405,6 +394,10 @@ namespace psync {
 		titleformat_compiler::get()->compile_safe(titleScript, "[%artist% - ]%title%");
 
 		std::vector<std::wstring> ignore = parseIgnoreList(cfg::ignoreTags.get());
+		// A changed ignore list changes the tag hashes; the engine then stops trusting the stored ones.
+		std::wstring ignoreKey;
+		for (auto& pat : ignore) ignoreKey += pathKey(pat) + L";";
+		if (!ignoreKey.empty()) opt.tagScheme = fnv1a(ignoreKey.data(), ignoreKey.size() * sizeof(wchar_t));
 		std::vector<std::wstring> warnings;
 		std::vector<SourceFile> files;
 

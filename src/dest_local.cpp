@@ -10,13 +10,6 @@ namespace psync {
 
 	namespace {
 
-		FILETIME toFileTime(int64_t v) {
-			FILETIME ft;
-			ft.dwLowDateTime = (DWORD)((uint64_t)v & 0xFFFFFFFF);
-			ft.dwHighDateTime = (DWORD)((uint64_t)v >> 32);
-			return ft;
-		}
-
 		bool getAttrs(const std::wstring& path, WIN32_FILE_ATTRIBUTE_DATA& d) {
 			return GetFileAttributesExW(longPath(path).c_str(), GetFileExInfoStandard, &d) != 0;
 		}
@@ -248,6 +241,13 @@ namespace psync {
 		if (p.rfind(L"\\\\?\\", 0) == 0) return p;
 		if (p.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + p.substr(2);
 		return L"\\\\?\\" + p;
+	}
+
+	FILETIME toFileTime(int64_t v) {
+		FILETIME ft;
+		ft.dwLowDateTime = (DWORD)((uint64_t)v & 0xFFFFFFFF);
+		ft.dwHighDateTime = (DWORD)((uint64_t)v >> 32);
+		return ft;
 	}
 
 	int64_t toInt64(const FILETIME& ft) { return (int64_t)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime); }

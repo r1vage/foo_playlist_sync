@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+**Safety**
+- With *Remove files that are no longer in the playlists* on, a destination folder that contains source files is now refused in both removal modes, not only with *Only files copied by Playlist Sync* off.
+- Album covers on the destination are no longer removed when the source drive is unplugged.
+- A playlist that was deleted and created again under the same name now shows as ticked in the preferences, as the sync already treated it. Before, the next *Apply* silently dropped it.
+
+**Fixes**
+- The pattern `$if2(%album artist%,Unknown Artist)\$if2(%album%,Unknown Album)\%filename%` is no longer silently replaced by the default pattern.
+- Folder and file names that start with a dot (for example the artist `.38 Special`) now start with `_`. Android hides dot folders, and *remove everything* never cleaned them up. Files already copied under such a name are copied once more under the new name.
+- Changing *Ignore tags* no longer copies files again in *Replace only if tags differ* mode. On the next sync the tags are read from the destination once (MTP: files are compared by size once).
+- Two selected playlists that would write the same `.m3u8` file name are reported as an error instead of one overwriting the other.
+- A library on a FAT32 drive is no longer copied again after a daylight-saving change.
+- Album art is found for source folders with paths longer than 260 characters.
+
 ## 0.1.1
 **Safety**
 - With *Remove files that are no longer in the playlists* on and *Only files copied by Playlist Sync* off, a destination folder that contains source files (for example the library's own drive or folder) is now refused instead of having those files deleted.

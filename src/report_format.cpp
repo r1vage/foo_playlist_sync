@@ -1,4 +1,5 @@
 #include "report_format.h"
+#include "dest_fs.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -16,9 +17,8 @@ namespace psync {
 	}
 
 	std::wstring formatTimestamp(int64_t ft, bool forFileName) {
-		FILETIME utc, local;
-		utc.dwLowDateTime = (DWORD)((uint64_t)ft & 0xFFFFFFFF);
-		utc.dwHighDateTime = (DWORD)((uint64_t)ft >> 32);
+		const FILETIME utc = toFileTime(ft);
+		FILETIME local;
 		SYSTEMTIME st{};
 		if (!FileTimeToLocalFileTime(&utc, &local) || !FileTimeToSystemTime(&local, &st)) return L"";
 		wchar_t buf[64];

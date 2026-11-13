@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace psync {
@@ -29,6 +30,11 @@ namespace psync {
 		bool playlistUnixStyle = false;  // forward slashes + LF line endings
 		bool createNomedia = false;      // put an empty .nomedia in the destination folder (hides it from Android media scanners)
 		bool dryRun = false;
+		// Destination paths without extension that are never removed, e.g. "Artist\Album\folder": covers whose
+		// source couldn't be looked up because the source drive is missing.
+		std::vector<std::wstring> keepStems;
+		// Identifies how tagHash is computed (the ignore list). Tag hashes stored under another value aren't trusted.
+		uint64_t tagScheme = 0;
 	};
 
 	struct SourceFile {
@@ -107,6 +113,9 @@ namespace psync {
 	std::wstring pathKey(const std::wstring& path); // case-insensitive comparison key
 	uint64_t fnv1a(const void* data, size_t len, uint64_t seed = 14695981039346656037ull);
 	bool wildcardMatchNoCase(const wchar_t* pattern, const wchar_t* text);
+	// Fingerprint of tag fields (name, value), independent of their order. Its values are stored on destinations:
+	// changing the output makes every "tags only" sync copy everything again.
+	uint64_t hashFields(std::vector<std::pair<std::string, std::string>> fields);
 	// Fixed folders at the start of a file name pattern, e.g. "Music2" for "Music2\%artist%\...". Removal of
 	// unknown files is limited to that folder so other content of the destination is never touched.
 	std::wstring literalFolderPrefix(const std::wstring& pattern);

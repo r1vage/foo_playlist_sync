@@ -96,4 +96,5 @@ namespace psync {
 	std::wstring parentRel(const std::wstring& rel);
 	std::wstring longPath(const std::wstring& path); // \\?\ form, lifts the 260 character limit
 	int64_t toInt64(const _FILETIME& ft);
+	_FILETIME toFileTime(int64_t v);
 }

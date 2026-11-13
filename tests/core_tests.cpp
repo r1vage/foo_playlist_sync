@@ -153,6 +153,11 @@ static void testFreshSyncAndRerun() {
 	Report r4 = run(fx.opts(), files);
 	CHECK(r4.count(Action::Replaced) == 1);
 	CHECK(readFile(fx.dst + L"\\Artist\\Album\\b.flac") == "BBBBBB");
+
+	// Exactly one hour apart with the same size is a DST shift on a FAT source drive, not a change.
+	setMtime(fx.src + L"\\b.flac", 3600);
+	Report r5 = run(fx.opts(), files);
+	CHECK(r5.count(Action::Replaced) == 0);
 }
 
 static void testNoPreserveTimestamps() {
@@ -325,6 +330,58 @@ static void testRemoveAllRefusesSourceInsideDest() {
 	CHECK(exists(fx.src + L"\\library\\a.mp3"));
 	CHECK(exists(fx.src + L"\\library\\b.mp3"));
 	CHECK(!exists(fx.src + L"\\Artist"));
+
+	// "Only files copied by Playlist Sync" adopts files it finds in place, so it is refused as well.
+	o.removeOnlyManaged = true;
+	Report r2 = run(o, { fx.file(L"library\\a.mp3", L"library\\a.mp3") });
+	CHECK(!r2.fatalError.empty());
+	CHECK(!exists(fx.src + L"\\.playlist_sync"));
+}
+
+static void testKeepStems() {
+	std::printf("covers of an unreachable source folder are kept\n");
+	Fixture fx(L"keepstems");
+	writeFile(fx.src + L"\\a.mp3", "a");
+	writeFile(fx.src + L"\\cover.png", "img");
+	Options o = fx.opts();
+	o.removeOrphans = true;
+	run(o, { fx.file(L"a.mp3", L"Art\\Alb\\a.mp3"), fx.file(L"cover.png", L"Art\\Alb\\folder.png") });
+
+	// The cover lookup failed (source drive unplugged): it's not in the list, but must stay.
+	o.keepStems = { L"Art\\Alb\\folder" };
+	Report r = run(o, { fx.file(L"a.mp3", L"Art\\Alb\\a.mp3") });
+	CHECK(r.count(Action::Removed) == 0);
+	CHECK(exists(fx.dst + L"\\Art\\Alb\\folder.png"));
+
+	// It is still known to the sync state: without the keep it is removed as usual.
+	o.keepStems.clear();
+	Report r2 = run(o, { fx.file(L"a.mp3", L"Art\\Alb\\a.mp3") });
+	CHECK(r2.count(Action::Removed) == 1);
+	CHECK(!exists(fx.dst + L"\\Art\\Alb\\folder.png"));
+}
+
+static void testIgnoreListChange() {
+	std::printf("tags-only: a changed ignore list doesn't re-copy\n");
+	Fixture fx(L"tagscheme");
+	writeFile(fx.src + L"\\a.mp3", "aaaa");
+	Options o = fx.opts();
+	o.policy = ExistingPolicy::TagsOnly;
+	run(o, { fx.file(L"a.mp3", L"a.mp3", 100, 7) });
+
+	// New ignore list: the source hash is different, but the destination's tags, hashed the new way, match.
+	o.tagScheme = 5;
+	int calls = 0;
+	DestTagReader reader = [&](const std::wstring&, uint64_t& tag, uint64_t& tech) { ++calls; tag = 200; tech = 7; return true; };
+	Report r = run(o, { fx.file(L"a.mp3", L"a.mp3", 200, 7) }, {}, reader);
+	CHECK(calls == 1);
+	CHECK(r.count(Action::Skipped) == 1);
+
+	// The new hash is stored: no more reads, and real tag changes are still seen.
+	Report r2 = run(o, { fx.file(L"a.mp3", L"a.mp3", 200, 7) }, {}, reader);
+	CHECK(calls == 1);
+	CHECK(r2.count(Action::Skipped) == 1);
+	Report r3 = run(o, { fx.file(L"a.mp3", L"a.mp3", 201, 7) }, {}, reader);
+	CHECK(r3.count(Action::Replaced) == 1);
 }
 
 static void testUnreadableManifestChangesNothing() {
@@ -469,6 +526,14 @@ static void testPlaylists() {
 	run(o, { fx.file(L"a.mp3", L"Art\\a.mp3") });
 	CHECK(!exists(fx.dst + L"\\Trip.m3u8"));
 	CHECK(exists(fx.dst + L"\\Art\\a.mp3"));
+
+	// Two playlists that map to the same file name: the second is an error, not a silent overwrite.
+	o.writePlaylists = true;
+	Report r5 = run(o, { fx.file(L"a.mp3", L"Art\\a.mp3") },
+		{ PlaylistOut{ L"Rock", { { L"Art\\a.mp3", 1, L"A" } } }, PlaylistOut{ L"rock", {} } });
+	CHECK(r5.count(Action::Playlist) == 1);
+	CHECK(r5.count(Action::Error) == 1);
+	CHECK(readFile(fx.dst + L"\\Rock.m3u8") == "#EXTM3U\r\n#EXTINF:1,A\r\nArt\\a.mp3\r\n");
 }
 
 static void testPlaylistSkipsCollidedTrack() {
@@ -514,6 +579,13 @@ static void testHelpers() {
 	CHECK(makePlaylistFileName(L"CON") == L"_CON.m3u8");
 	CHECK(makePlaylistFileName(L"a/b") == L"a_b.m3u8");
 	CHECK(pathKey(L"a/B\\c") == pathKey(L"A\\b\\C"));
+	CHECK(makePlaylistFileName(L".38 Special") == L"_38 Special.m3u8"); // dot folders are hidden on Android
+	CHECK(makePlaylistFileName(L"..") == L"_.m3u8");
+
+	// These values are stored in sync state files on users' devices; they must never change.
+	CHECK(fnv1a("a", 1) == 0xaf63dc4c8601ec8cull);
+	CHECK(hashFields({ { "TITLE", "Y" }, { "ARTIST", "X\x1fZ" } }) == 0x2944bfcba6383beaull);
+	CHECK(hashFields({ { "ARTIST", "X\x1fZ" }, { "TITLE", "Y" } }) == 0x2944bfcba6383beaull);
 
 	// Decides how far "remove everything" may reach.
 	CHECK(literalFolderPrefix(L"Music2\\%artist%\\%title%") == L"Music2");
@@ -626,7 +698,7 @@ static void testMtpLikeDestination() {
 	// The device reports no dates; the manifest alone decides.
 	Report r2 = runMem(fs, o, files);
 	CHECK(r2.count(Action::Skipped) == 2);
-	setMtime(fx.src + L"\\a.mp3", 3600);
+	setMtime(fx.src + L"\\a.mp3", 7200);
 	Report r3 = runMem(fs, o, files);
 	CHECK(r3.count(Action::Replaced) == 1);
 
@@ -838,6 +910,8 @@ int wmain(int argc, wchar_t** argv) {
 	testRemoveAll();
 	testRemoveAllScopeAndHidden();
 	testRemoveAllRefusesSourceInsideDest();
+	testKeepStems();
+	testIgnoreListChange();
 	testUnreadableManifestChangesNothing();
 	testSafetyEmptyList();
 	testMissingSourceKeepsDest();

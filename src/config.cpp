@@ -24,12 +24,6 @@ namespace psync::cfg {
 		"$cut($if2(%album%,Unknown Album),70)$if(%date%,' ('%date%')')\\"
 		"$if(%tracknumber%,$if($or($greater(%totaldiscs%,1),$greater(%discnumber%,1)),%discnumber%-)%tracknumber% - )"
 		"$if2(%title%,%filename%).$ext(%_path%)";
-	// Earlier defaults; settings still holding one of them are moved to the current default.
-	static const char* const previousDefaultPatterns[] = {
-		"$if2(%album artist%,Unknown Artist)\\$if2(%album%,Unknown Album)\\%filename%",
-		"$if2(%album artist%,Unknown Artist)\\$cut($if2(%album%,Unknown Album),70)$if(%date%,' ('%date%')')\\"
-		"$if(%tracknumber%,%tracknumber% - )$if2(%title%,%filename%).$ext(%_path%)",
-	};
 	const char* const defaultIgnoreTags = "";
 
 	cfg_string playlists(guid_playlists, "");
@@ -91,7 +85,6 @@ namespace psync::cfg {
 	pfc::string8 getPattern() {
 		pfc::string8 p = pattern.get();
 		if (p.is_empty()) p = defaultPattern;
-		for (auto old : previousDefaultPatterns) if (p == old) p = defaultPattern;
 		return p;
 	}
 

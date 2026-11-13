@@ -19,7 +19,7 @@ Download `foo_playlist_sync-<version>.fb2k-component` and double-click it, or us
 | Setting | What it does |
 |---|---|
 | Destination | Where files are copied: a drive letter (`E:\`), a folder, a network share, or an MTP device (phone or player without a drive letter) as `mtp://Device/Storage/Folder`. **Browse ▾** lists the connected MTP devices. |
-| File name pattern | Title formatting for the path below the destination. The file extension is added automatically. Characters that aren't allowed in file names are replaced. Default: `$if2(%album artist%,Unknown Artist)\$if2(%album%,Unknown Album)\%filename%` |
+| File name pattern | Title formatting for the path below the destination. The file extension is added automatically. Characters that aren't allowed in file names are replaced. A folder or file name that starts with a dot gets `_` instead, because Android hides dot folders. The default gives `Album Artist\Album (Date)\NN - Title.ext`; a simpler choice is `$if2(%album artist%,Unknown Artist)\$if2(%album%,Unknown Album)\%filename%` |
 | **When the file already exists on the destination:** | |
 | Replace if size or date differs | Copies again when the source file changed since the last sync. |
 | Replace only if tags differ | Copies again only when tags changed. A file whose date changed but whose tags are the same is skipped. ReplayGain is never compared. *Ignore tags* lists more fields to leave out (separate with `;`, `*` is a wildcard). |
@@ -40,7 +40,8 @@ Download `foo_playlist_sync-<version>.fb2k-component` and double-click it, or us
 - Safety:
   - Copies go to a temporary `*.psync-tmp` file first and replace the old file only when complete. Pulling the cable mid-copy never leaves a half-written file under the real name.
   - Free space is checked before anything is changed.
-  - A source file that is temporarily missing (for example, an unplugged library drive) never causes its copy to be deleted.
+  - A source file that is temporarily missing (for example, an unplugged library drive) never causes its copy to be deleted. The same goes for album covers.
+  - With *Remove files* on, a destination folder that contains the source files is refused.
   - If none of the playlists' files could be synced, nothing is deleted.
 - Files are removed first, to make room, and copied afterwards. Cancelling keeps everything consistent: the report lists what was done before you cancelled.
 
