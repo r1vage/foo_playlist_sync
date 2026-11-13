@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2
 **Safety**
 - With *Remove files that are no longer in the playlists* on, a destination folder that contains source files is now refused in both removal modes, not only with *Only files copied by Playlist Sync* off.
 - Album covers on the destination are no longer removed when the source drive is unplugged.
